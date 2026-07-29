@@ -1,543 +1,807 @@
 <!DOCTYPE html>
 <html lang="ko">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>아이돌봄 정산 및 일정표</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>아이돌봄 근무 정산표</title>
 
-    <!-- Firebase SDK (v10) CDN -->
-    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+  <!-- Firebase SDK (v10) CDN -->
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
 
-    <style>
-        :root {
-            --primary: #4A90E2;
-            --primary-hover: #357ABD;
-            --bg: #F4F7FA;
-            --card-bg: #FFFFFF;
-            --text: #333333;
-            --text-muted: #666666;
-            --border: #E1E8ED;
-            --holiday-bg: #FFF5F5;
-            --holiday-text: #E53E3E;
-            --accent: #EBF8FF;
-        }
+  <style>
+    :root {
+      --primary-color: #4A90E2;
+      --bg-color: #F4F7FA;
+      --card-bg: #FFFFFF;
+      --border-color: #E1E8ED;
+      --selected-bg: #E3F2FD;
+      --selected-border: #2196F3;
+      --delete-mode-bg: #FFEBEE;
+      --delete-mode-border: #EF5350;
+      --danger-color: #E74C3C;
+      --memo-bg: #FFF9C4;
+      --memo-text: #F57F17;
+      --off-bg: #F5F5F5;
+      --off-border: #BDBDBD;
+      --holiday-color: #E74C3C;
+    }
 
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-        }
+    * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { background-color: var(--bg-color); margin: 0; padding: 20px 10px; color: #333; }
+    .container { max-width: 650px; margin: 0 auto; }
 
-        body {
-            background-color: var(--bg);
-            color: var(--text);
-            padding: 20px 12px;
-            max-width: 600px;
-            margin: 0 auto;
-        }
+    h1 { text-align: center; color: #2C3E50; font-size: 22px; margin-bottom: 20px; }
 
-        .card {
-            background: var(--card-bg);
-            border-radius: 16px;
-            padding: 20px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.05);
-            margin-bottom: 16px;
-        }
+    .card {
+      background: var(--card-bg);
+      border-radius: 12px;
+      padding: 18px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+      margin-bottom: 16px;
+    }
 
-        .header {
-            text-align: center;
-            margin-bottom: 20px;
-        }
+    /* 캘린더 헤더 */
+    .calendar-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 15px;
+    }
+    .calendar-header h2 { margin: 0; font-size: 18px; color: #2C3E50; }
+    .calendar-header button {
+      background: #fff; border: 1px solid var(--border-color);
+      border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 13px;
+    }
 
-        .header h1 {
-            font-size: 1.4rem;
-            color: var(--text);
-            margin-bottom: 6px;
-        }
+    /* 캘린더 그리드 */
+    .calendar-grid {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 4px;
+      text-align: center;
+    }
+    .day-name { font-weight: bold; padding: 6px 0; color: #7f8c8d; font-size: 12px; }
+    .day-name.sun { color: var(--holiday-color); }
+    .day-name.sat { color: #3498db; }
 
-        .header p {
-            font-size: 0.9rem;
-            color: var(--text-muted);
-        }
+    .day-cell {
+      min-height: 70px;
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      padding: 4px;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      background: white;
+      transition: all 0.15s ease;
+      position: relative;
+    }
+    .day-cell:hover { border-color: var(--primary-color); }
+    .day-cell.empty { border: none; cursor: default; background: transparent; }
 
-        .greeting {
-            background: var(--accent);
-            border-left: 4px solid var(--primary);
-            padding: 12px;
-            border-radius: 0 8px 8px 0;
-            font-size: 0.95rem;
-            line-height: 1.5;
-            margin-bottom: 20px;
-        }
+    /* 공휴일/일요일 날짜 색상 */
+    .day-cell.is-holiday .day-number,
+    .day-cell.is-sun .day-number {
+      color: var(--holiday-color);
+    }
+    .day-cell.is-sat .day-number {
+      color: #3498db;
+    }
 
-        .month-selector {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 16px;
-        }
+    /* 공휴일 이름 뱃지 */
+    .holiday-label {
+      font-size: 9px;
+      color: var(--holiday-color);
+      font-weight: bold;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-bottom: 2px;
+    }
 
-        .month-selector button {
-            background: var(--bg);
-            border: 1px solid var(--border);
-            padding: 6px 12px;
-            border-radius: 8px;
-            cursor: pointer;
-            font-weight: bold;
-        }
+    /* 근무 등록된 날짜 */
+    .day-cell.active {
+      background-color: var(--selected-bg);
+      border-color: var(--selected-border);
+    }
 
-        .month-selector h2 {
-            font-size: 1.2rem;
-        }
+    /* 휴무/비근무 상태 카드의 스타일 */
+    .day-cell.is-off {
+      background-color: var(--off-bg) !important;
+      border-color: var(--off-border) !important;
+    }
 
-        .summary-box {
-            background: var(--bg);
-            border-radius: 12px;
-            padding: 16px;
-            margin-bottom: 20px;
-        }
+    /* 삭제 모드 시 다중 선택된 날짜 */
+    .day-cell.to-delete {
+      background-color: var(--delete-mode-bg) !important;
+      border-color: var(--delete-mode-border) !important;
+    }
 
-        .summary-row {
-            display: flex;
-            justify-content: space-between;
-            margin-bottom: 8px;
-            font-size: 0.95rem;
-        }
+    .day-header-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+    }
 
-        .summary-row:last-child {
-            margin-bottom: 0;
-            padding-top: 8px;
-            border-top: 1px dashed var(--border);
-            font-weight: bold;
-            font-size: 1.1rem;
-            color: var(--primary);
-        }
+    .day-number { font-size: 12px; font-weight: bold; text-align: left; }
 
-        .table-container {
-            overflow-x: auto;
-        }
+    .work-info-badge {
+      font-size: 9px;
+      background: var(--primary-color);
+      color: white;
+      border-radius: 4px;
+      padding: 2px;
+      margin-top: 2px;
+      line-height: 1.2;
+    }
 
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 0.9rem;
-        }
+    /* 메모 태그 스타일 */
+    .memo-badge {
+      font-size: 9px;
+      background: var(--memo-bg);
+      color: var(--memo-text);
+      border: 1px solid #FFE082;
+      border-radius: 3px;
+      padding: 2px;
+      margin-top: 2px;
+      font-weight: bold;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      display: block;
+    }
 
-        th, td {
-            padding: 10px 6px;
-            text-align: center;
-            border-bottom: 1px solid var(--border);
-        }
+    /* 컨트롤 버튼 그룹 */
+    .action-btn-group {
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    .quick-btn {
+      flex: 1;
+      background: #E8F4FE;
+      color: var(--primary-color);
+      border: 1px solid var(--primary-color);
+      border-radius: 6px;
+      padding: 10px;
+      font-weight: bold;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .delete-mode-btn {
+      background: #FFF0F0;
+      color: var(--danger-color);
+      border: 1px solid var(--danger-color);
+      border-radius: 6px;
+      padding: 10px 14px;
+      font-weight: bold;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .delete-mode-btn.active {
+      background: var(--danger-color);
+      color: white;
+    }
 
-        th {
-            background: var(--bg);
-            color: var(--text-muted);
-            font-weight: 600;
-        }
+    .batch-delete-execute-btn {
+      width: 100%;
+      background: var(--danger-color);
+      color: white;
+      border: none;
+      border-radius: 6px;
+      padding: 10px;
+      font-weight: bold;
+      font-size: 13px;
+      cursor: pointer;
+      margin-top: 8px;
+    }
 
-        td.holiday {
-            background-color: var(--holiday-bg);
-            color: var(--holiday-text);
-        }
+    /* 기본 정보 하단 이동 영역 */
+    .info-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: #EBF3FA;
+      padding: 12px 16px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: bold;
+      color: #2C3E50;
+    }
 
-        .holiday-name {
-            font-size: 0.75rem;
-            display: block;
-            color: var(--holiday-text);
-        }
+    /* 총 합계 & 공유 카드 */
+    .summary-card {
+      background: #2C3E50;
+      color: white;
+      border-radius: 12px;
+      padding: 20px 18px;
+      text-align: center;
+    }
+    .cheering-message {
+      font-size: 15px;
+      font-weight: bold;
+      color: #F1C40F;
+      margin-bottom: 8px;
+    }
+    .summary-title {
+      font-size: 14px;
+      color: #BDC3C7;
+    }
+    .summary-value { font-size: 26px; font-weight: bold; color: #2ECC71; margin: 6px 0; }
+    .summary-detail { font-size: 13px; color: #BDC3C7; }
 
-        input[type="number"] {
-            width: 50px;
-            padding: 4px;
-            border: 1px solid var(--border);
-            border-radius: 4px;
-            text-align: center;
-        }
+    .share-btn {
+      width: 100%;
+      background: #2ECC71;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      padding: 12px;
+      font-size: 15px;
+      font-weight: bold;
+      cursor: pointer;
+      margin-top: 14px;
+    }
+    .share-btn:hover { background: #27AE60; }
 
-        .btn {
-            display: block;
-            width: 100%;
-            padding: 12px;
-            background: var(--primary);
-            color: white;
-            border: none;
-            border-radius: 10px;
-            font-size: 1rem;
-            font-weight: bold;
-            cursor: pointer;
-            text-align: center;
-            transition: background 0.2s;
-            margin-top: 10px;
-        }
+    /* 모달 팝업 */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(0,0,0,0.4);
+      justify-content: center;
+      align-items: center;
+      z-index: 1000;
+    }
+    .modal-overlay.open { display: flex; }
+    .modal-content {
+      background: white;
+      width: 90%;
+      max-width: 380px;
+      border-radius: 12px;
+      padding: 20px;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+    }
+    .modal-title { font-size: 16px; font-weight: bold; margin-bottom: 15px; color: #2C3E50; }
+    .input-group { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
+    .input-group label { font-size: 12px; font-weight: bold; color: #666; }
+    .input-group input[type="text"], .input-group input[type="time"] {
+      padding: 8px 10px;
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      font-size: 14px;
+    }
 
-        .btn:hover {
-            background: var(--primary-hover);
-        }
+    .checkbox-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: #F8F9FA;
+      padding: 10px;
+      border-radius: 6px;
+      border: 1px solid var(--border-color);
+      margin-bottom: 12px;
+      cursor: pointer;
+    }
+    .checkbox-group input { width: 16px; height: 16px; cursor: pointer; }
+    .checkbox-group label { font-size: 13px; font-weight: bold; color: #E74C3C; cursor: pointer; }
 
-        .btn-secondary {
-            background: #6C757D;
-        }
-
-        .btn-secondary:hover {
-            background: #5A6268;
-        }
-
-        .share-box {
-            margin-top: 15px;
-            text-align: center;
-        }
-
-        .share-url {
-            word-break: break-all;
-            font-size: 0.85rem;
-            color: var(--text-muted);
-            background: var(--bg);
-            padding: 8px;
-            border-radius: 6px;
-            margin-top: 8px;
-        }
-
-        .toast {
-            position: fixed;
-            bottom: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            background: rgba(0,0,0,0.8);
-            color: white;
-            padding: 10px 20px;
-            border-radius: 20px;
-            font-size: 0.9rem;
-            display: none;
-            z-index: 1000;
-        }
-    </style>
+    .modal-buttons { display: flex; gap: 8px; margin-top: 20px; }
+    .modal-buttons button {
+      flex: 1; padding: 10px; border: none; border-radius: 6px; font-weight: bold; cursor: pointer;
+    }
+    .btn-save { background: var(--primary-color); color: white; }
+    .btn-delete { background: var(--danger-color); color: white; }
+    .btn-close { background: #E1E8ED; color: #333; }
+  </style>
 </head>
 <body>
 
-    <div class="card">
-        <div class="header">
-            <h1>🍼 아이돌봄 정산표</h1>
-            <p>시급: 17,000원 | 고정일: 화, 목, 금 (16:30 ~ 19:30)</p>
-        </div>
+<div class="container">
+  <h1>👶 아이돌봄 근무 정산표</h1>
 
-        <div class="greeting">
-            안녕하세요 선생님! 항상 정성으로 아이를 돌봐주셔서 진심으로 감사드립니다. ❤️<br>
-            이번 달 돌봄 정산 내역을 정리하여 공유해 드립니다. 확인 부탁드립니다!
-        </div>
-
-        <div class="month-selector">
-            <button onclick="changeMonth(-1)">&lt; 이전달</button>
-            <h2 id="currentMonthText">2024년 1월</h2>
-            <button onclick="changeMonth(1)">다음달 &gt;</button>
-        </div>
-
-        <div class="summary-box">
-            <div class="summary-row">
-                <span>총 근무 일수:</span>
-                <span id="totalDays">0일</span>
-            </div>
-            <div class="summary-row">
-                <span>총 근무 시간:</span>
-                <span id="totalHours">0시간</span>
-            </div>
-            <div class="summary-row">
-                <span>총 정산 금액:</span>
-                <span id="totalAmount">0원</span>
-            </div>
-        </div>
-
-        <div class="table-container">
-            <table>
-                <thead>
-                    <tr>
-                        <th>날짜</th>
-                        <th>요일</th>
-                        <th>시간</th>
-                        <th>비고</th>
-                    </tr>
-                </thead>
-                <tbody id="scheduleBody">
-                    <!-- 스크립트로 동적 생성 -->
-                </tbody>
-            </table>
-        </div>
-
-        <button class="btn" onclick="saveAndShare()">🔗 정산 내역 저장 및 공유 링크 생성</button>
-
-        <div class="share-box" id="shareResult" style="display: none;">
-            <p style="font-size:0.9rem; font-weight:bold; color:var(--primary);">아래 링크가 복사되었습니다!</p>
-            <div class="share-url" id="shareUrl"></div>
-        </div>
+  <!-- 1. 캘린더 -->
+  <div class="card">
+    <div class="calendar-header">
+      <button onclick="changeMonth(-1)">◀ 이전달</button>
+      <h2 id="currentMonthTitle">2026년 7월</h2>
+      <button onclick="changeMonth(1)">다음달 ▶</button>
     </div>
 
-    <div class="toast" id="toast">메시지</div>
+    <div class="calendar-grid" id="calendarGrid"></div>
 
-    <script>
-        // 1. Firebase 초기화
-        const firebaseConfig = {
-            apiKey: "AIzaSyBUN_PpnUljxekaQuuuw48bDs9N1ZKrgJw",
-            authDomain: "youna-k.firebaseapp.com",
-            projectId: "youna-k",
-            storageBucket: "youna-k.firebasestorage.app",
-            messagingSenderId: "685048156796",
-            appId: "1:685048156796:web:6352ff5c96363aea69eff9"
-        };
+    <div class="action-btn-group">
+      <button class="quick-btn" onclick="applyDefaultSchedule()">
+        ⚡ 화/목/금 일괄 등록
+      </button>
+      <button class="delete-mode-btn" id="deleteModeToggleBtn" onclick="toggleDeleteMode()">
+        🗑️ 선택 삭제 모드 OFF
+      </button>
+    </div>
 
-        firebase.initializeApp(firebaseConfig);
-        const db = firebase.firestore();
+    <!-- 선택 삭제 실행 버튼 -->
+    <button class="batch-delete-execute-btn" id="batchDeleteBtn" style="display: none;" onclick="executeBatchDelete()">
+      선택한 0개 일정 삭제하기
+    </button>
+  </div>
 
-        // 설정 변수
-        const HOURLY_RATE = 17000;
-        const FIXED_HOURS = 3; // 16:30 ~ 19:30
-        const FIXED_DAYS = [2, 4, 5]; // 화(2), 목(4), 금(5)
+  <!-- 2. 약정 기준 안내 -->
+  <div class="card">
+    <div class="info-bar">
+      <span>💰 약정 시급: <strong>17,000원</strong></span>
+      <span>⏰ 기본 시간: <strong>15:30 ~ 18:30</strong> (화/목/금)</span>
+    </div>
+  </div>
 
-        let currentDate = new Date();
-        let currentYear = currentDate.getFullYear();
-        let currentMonth = currentDate.getMonth(); // 0-11
-        let scheduleData = {}; // { "YYYY-MM-DD": { hours: 3, note: "", isHoliday: false } }
-        let holidays = {}; // { "YYYY-MM-DD": "휴일명" }
+  <!-- 3. 총 합계 & 공유 -->
+  <div class="summary-card">
+    <div class="cheering-message">👏 이번 달도 수고 많으셨습니다!</div>
+    <div class="summary-title">이번 달 예상 지급액</div>
+    <div class="summary-value" id="totalSalary">0 원</div>
+    <div class="summary-detail" id="totalDetail">총 0일 (0시간) 근무</div>
+    <button class="share-btn" onclick="saveAndShare()">🔗 정산 내역 클라우드 저장 및 짧은 링크 복사</button>
+  </div>
+</div>
 
-        // 한국 공휴일 데이터 (기본/백업)
-        const fallbackHolidays = {
-            "2024-01-01": "신정",
-            "2024-02-09": "설날 연휴",
-            "2024-02-10": "설날",
-            "2024-02-11": "설날 연휴",
-            "2024-02-12": "대체공휴일",
-            "2024-03-01": "삼일절",
-            "2024-04-10": "국회의원선거",
-            "2024-05-05": "어린이날",
-            "2024-05-06": "대체공휴일",
-            "2024-05-15": "부처님오신날",
-            "2024-06-06": "현충일",
-            "2024-08-15": "광복절",
-            "2024-09-16": "추석 연휴",
-            "2024-09-17": "추석",
-            "2024-09-18": "추석 연휴",
-            "2024-10-03": "개천절",
-            "2024-10-09": "한글날",
-            "2024-12-25": "성탄절",
-            "2025-01-01": "신정",
-            "2025-01-28": "설날 연휴",
-            "2025-01-29": "설날",
-            "2025-01-30": "설날 연휴",
-            "2025-03-01": "삼일절",
-            "2025-05-05": "어린이날",
-            "2025-05-06": "부처님오신날",
-            "2025-06-06": "현충일",
-            "2025-08-15": "광복절",
-            "2025-10-03": "개천절",
-            "2025-10-06": "추석 연휴",
-            "2025-10-07": "추석",
-            "2025-10-08": "추석 연휴",
-            "2025-10-09": "한글날",
-            "2025-12-25": "성탄절"
-        };
+<!-- 4. 세부 일정 및 메모 수정 모달 팝업 -->
+<div class="modal-overlay" id="timeModal">
+  <div class="modal-content">
+    <div class="modal-title" id="modalDateTitle">2026-07-28 일정 설정</div>
 
-        window.onload = async function() {
-            // URL에 shared ID가 있는지 확인
-            const urlParams = new URLSearchParams(window.location.search);
-            const docId = urlParams.get('id');
+    <div class="checkbox-group" onclick="toggleOffInputs()">
+      <input type="checkbox" id="modalIsOff">
+      <label for="modalIsOff">🚫 휴무(비근무)로 설정 (시간/급여 제외)</label>
+    </div>
 
-            if (docId) {
-                await loadFromFirestore(docId);
-            } else {
-                fetchHolidaysAndRender();
-            }
-        };
+    <div id="timeInputsContainer">
+      <div class="input-group">
+        <label>시작 시간</label>
+        <input type="time" id="modalStartTime" value="15:30">
+      </div>
+      <div class="input-group">
+        <label>종료 시간</label>
+        <input type="time" id="modalEndTime" value="18:30">
+      </div>
+    </div>
 
-        async function fetchHolidaysAndRender() {
-            try {
-                const res = await fetch(`https://date.nager.at/api/v3/PublicHolidays/${currentYear}/KR`);
-                if (res.ok) {
-                    const data = await res.json();
-                    holidays = {};
-                    data.forEach(h => {
-                        holidays[h.date] = h.localName;
-                    });
-                } else {
-                    holidays = fallbackHolidays;
-                }
-            } catch (e) {
-                holidays = fallbackHolidays;
-            }
-            generateSchedule();
-            renderTable();
+    <div class="input-group">
+      <label>메모 / 비고 (예: 휴무, 연차, 시간연장 등)</label>
+      <input type="text" id="modalMemo" placeholder="내용을 입력해주세요">
+    </div>
+
+    <div class="modal-buttons">
+      <button class="btn-delete" onclick="deleteCurrentSchedule()">삭제</button>
+      <button class="btn-close" onclick="closeModal()">취소</button>
+      <button class="btn-save" onclick="saveCurrentSchedule()">저장</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Firebase 초기화
+  const firebaseConfig = {
+    apiKey: "AIzaSyBUN_PpnUljxekaQuuuw48bDs9N1ZKrgJw",
+    authDomain: "youna-k.firebaseapp.com",
+    projectId: "youna-k",
+    storageBucket: "youna-k.firebasestorage.app",
+    messagingSenderId: "685048156796",
+    appId: "1:685048156796:web:6352ff5c96363aea69eff9"
+  };
+
+  firebase.initializeApp(firebaseConfig);
+  const db = firebase.firestore();
+
+  const HOURLY_RATE = 17000;
+
+  let currentDate = new Date();
+  let workedSchedules = {};
+  let selectedDateStr = null;
+  let holidaysMap = {};
+
+  let isDeleteMode = false;
+  let datesToDelete = new Set();
+
+  const dayNames = ['일', '월', '화', '수', '목', '금', '토'];
+
+  async function init() {
+    // 1. URL ID 기반 Firestore 데이터 로드 시도
+    const urlParams = new URLSearchParams(window.location.search);
+    const docId = urlParams.get('id');
+
+    if (docId) {
+      await loadFromFirestore(docId);
+    } else {
+      // 구 버전 하위 호환성 (Hash Data)
+      loadStateFromUrl();
+      await fetchHolidays(currentDate.getFullYear());
+      renderCalendar();
+    }
+  }
+
+  // 한국 공휴일 API 가져오기 (Nager.Date Public API 연동)
+  async function fetchHolidays(year) {
+    if (holidaysMap[year]) return;
+    try {
+      const response = await fetch(`https://date.nager.at/api/v3/PublicHolidays/${year}/KR`);
+      if (response.ok) {
+        const data = await response.json();
+        data.forEach(holiday => {
+          holidaysMap[holiday.date] = holiday.localName;
+        });
+      }
+    } catch (e) {
+      console.warn('공휴일 정보 가져오기 실패, 기본 백업 활용', e);
+      const fallback = {
+        [`${year}-01-01`]: '신정',
+        [`${year}-03-01`]: '삼일절',
+        [`${year}-05-05`]: '어린이날',
+        [`${year}-06-06`]: '현충일',
+        [`${year}-08-15`]: '광복절',
+        [`${year}-10-03`]: '개천절',
+        [`${year}-10-09`]: '한글날',
+        [`${year}-12-25`]: '성탄절'
+      };
+      Object.assign(holidaysMap, fallback);
+    }
+  }
+
+  async function renderCalendar() {
+    const year = currentDate.getFullYear();
+    const month = currentDate.getMonth();
+
+    await fetchHolidays(year);
+
+    document.getElementById('currentMonthTitle').innerText = `${year}년 ${month + 1}월`;
+
+    const calendarGrid = document.getElementById('calendarGrid');
+    calendarGrid.innerHTML = '';
+
+    dayNames.forEach((name, idx) => {
+      const dayHeader = document.createElement('div');
+      dayHeader.className = `day-name ${idx === 0 ? 'sun' : idx === 6 ? 'sat' : ''}`;
+      dayHeader.innerText = name;
+      calendarGrid.appendChild(dayHeader);
+    });
+
+    const firstDay = new Date(year, month, 1).getDay();
+    const lastDate = new Date(year, month + 1, 0).getDate();
+
+    for (let i = 0; i < firstDay; i++) {
+      const emptyCell = document.createElement('div');
+      emptyCell.className = 'day-cell empty';
+      calendarGrid.appendChild(emptyCell);
+    }
+
+    for (let date = 1; date <= lastDate; date++) {
+      const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(date).padStart(2, '0')}`;
+      const dayOfWeek = new Date(year, month, date).getDay();
+      
+      const cell = document.createElement('div');
+      cell.className = 'day-cell';
+
+      const holidayName = holidaysMap[dateStr];
+      if (holidayName) cell.classList.add('is-holiday');
+      if (dayOfWeek === 0) cell.classList.add('is-sun');
+      if (dayOfWeek === 6) cell.classList.add('is-sat');
+
+      const schedule = workedSchedules[dateStr];
+      const holidayHtml = holidayName ? `<div class="holiday-label">${holidayName}</div>` : '';
+
+      if (schedule) {
+        if (schedule.isOff) {
+          cell.classList.add('is-off');
+          let memoHtml = schedule.memo ? `<div class="memo-badge">${schedule.memo}</div>` : '<div class="memo-badge">휴무</div>';
+          cell.innerHTML = `
+            <div class="day-header-wrap">
+              <div class="day-number">${date}</div>
+              ${holidayHtml}
+            </div>
+            <div>${memoHtml}</div>
+          `;
+        } else {
+          cell.classList.add('active');
+          let memoHtml = schedule.memo ? `<div class="memo-badge">${schedule.memo}</div>` : '';
+          cell.innerHTML = `
+            <div class="day-header-wrap">
+              <div class="day-number">${date}</div>
+              ${holidayHtml}
+            </div>
+            <div>
+              <div class="work-info-badge">
+                ${schedule.start}~${schedule.end}<br>(${schedule.hours}h)
+              </div>
+              ${memoHtml}
+            </div>
+          `;
         }
+      } else {
+        cell.innerHTML = `
+          <div class="day-header-wrap">
+            <div class="day-number">${date}</div>
+            ${holidayHtml}
+          </div>
+        `;
+      }
 
-        function generateSchedule() {
-            const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
-            
-            for (let day = 1; day <= daysInMonth; day++) {
-                const dateObj = new Date(currentYear, currentMonth, day);
-                const dateStr = formatDate(dateObj);
-                const dayOfWeek = dateObj.getDay();
+      if (isDeleteMode && datesToDelete.has(dateStr)) {
+        cell.classList.add('to-delete');
+      }
 
-                if (!scheduleData[dateStr]) {
-                    // 고정 요일(화/목/금)이고 공휴일이 아니면 기본 3시간 설정
-                    const isHoliday = !!holidays[dateStr];
-                    const isFixedDay = FIXED_DAYS.includes(dayOfWeek);
+      cell.onclick = () => handleDateClick(dateStr);
+      calendarGrid.appendChild(cell);
+    }
 
-                    if (isFixedDay && !isHoliday) {
-                        scheduleData[dateStr] = { hours: FIXED_HOURS, note: '' };
-                    } else {
-                        scheduleData[dateStr] = { hours: 0, note: isHoliday ? holidays[dateStr] : '' };
-                    }
-                }
-            }
+    calculateTotal();
+    updateBatchDeleteBtnText();
+  }
+
+  function handleDateClick(dateStr) {
+    if (isDeleteMode) {
+      if (datesToDelete.has(dateStr)) {
+        datesToDelete.delete(dateStr);
+      } else {
+        if (workedSchedules[dateStr]) {
+          datesToDelete.add(dateStr);
         }
+      }
+      renderCalendar();
+    } else {
+      openModal(dateStr);
+    }
+  }
 
-        function renderTable() {
-            document.getElementById('currentMonthText').innerText = `${currentYear}년 ${currentMonth + 1}월`;
-            const tbody = document.getElementById('scheduleBody');
-            tbody.innerHTML = '';
+  function toggleOffInputs() {
+    const isOff = document.getElementById('modalIsOff').checked;
+    const container = document.getElementById('timeInputsContainer');
+    if (isOff) {
+      container.style.opacity = '0.4';
+      container.style.pointerEvents = 'none';
+    } else {
+      container.style.opacity = '1';
+      container.style.pointerEvents = 'auto';
+    }
+  }
 
-            const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
-            const dayNames = ['일', '월', '화', '수', '목', '금', '토'];
+  function toggleDeleteMode() {
+    isDeleteMode = !isDeleteMode;
+    datesToDelete.clear();
 
-            let totalHours = 0;
-            let totalDays = 0;
+    const toggleBtn = document.getElementById('deleteModeToggleBtn');
+    const batchBtn = document.getElementById('batchDeleteBtn');
 
-            for (let day = 1; day <= daysInMonth; day++) {
-                const dateObj = new Date(currentYear, currentMonth, day);
-                const dateStr = formatDate(dateObj);
-                const dayOfWeek = dateObj.getDay();
-                const dayName = dayNames[dayOfWeek];
-                const holidayName = holidays[dateStr];
-                
-                const item = scheduleData[dateStr] || { hours: 0, note: '' };
+    if (isDeleteMode) {
+      toggleBtn.innerText = '🗑️ 선택 삭제 모드 ON';
+      toggleBtn.classList.add('active');
+      batchBtn.style.display = 'block';
+    } else {
+      toggleBtn.innerText = '🗑️ 선택 삭제 모드 OFF';
+      toggleBtn.classList.remove('active');
+      batchBtn.style.display = 'none';
+    }
 
-                if (item.hours > 0) {
-                    totalHours += parseFloat(item.hours);
-                    totalDays++;
-                }
+    renderCalendar();
+  }
 
-                const tr = document.createElement('tr');
-                if (holidayName || dayOfWeek === 0 || dayOfWeek === 6) {
-                    tr.classList.add('holiday');
-                }
+  function executeBatchDelete() {
+    if (datesToDelete.size === 0) {
+      alert('삭제할 일정을 먼저 선택해 주세요.');
+      return;
+    }
 
-                tr.innerHTML = `
-                    <td>${day}일</td>
-                    <td>
-                        ${dayName}
-                        ${holidayName ? `<span class="holiday-name">${holidayName}</span>` : ''}
-                    </td>
-                    <td>
-                        <input type="number" min="0" max="24" step="0.5" value="${item.hours}" 
-                               onchange="updateHours('${dateStr}', this.value)">
-                    </td>
-                    <td>
-                        <input type="text" style="width: 90%; padding: 4px;" value="${item.note || ''}" 
-                               placeholder="비고" onchange="updateNote('${dateStr}', this.value)">
-                    </td>
-                `;
-                tbody.appendChild(tr);
-            }
+    if (confirm(`선택한 ${datesToDelete.size}개 일정을 삭제하시겠습니까?`)) {
+      datesToDelete.forEach(dateStr => {
+        delete workedSchedules[dateStr];
+      });
+      datesToDelete.clear();
+      toggleDeleteMode();
+    }
+  }
 
-            // 요약 갱신
-            document.getElementById('totalDays').innerText = `${totalDays}일`;
-            document.getElementById('totalHours').innerText = `${totalHours}시간`;
-            document.getElementById('totalAmount').innerText = `${(totalHours * HOURLY_RATE).toLocaleString()}원`;
+  function updateBatchDeleteBtnText() {
+    const batchBtn = document.getElementById('batchDeleteBtn');
+    batchBtn.innerText = `선택한 ${datesToDelete.size}개 일정 삭제하기`;
+  }
+
+  function openModal(dateStr) {
+    selectedDateStr = dateStr;
+    document.getElementById('modalDateTitle').innerText = `${dateStr} 일정 및 메모 설정`;
+
+    const schedule = workedSchedules[dateStr];
+    const isOffCb = document.getElementById('modalIsOff');
+
+    if (schedule) {
+      isOffCb.checked = !!schedule.isOff;
+      document.getElementById('modalStartTime').value = schedule.start || "15:30";
+      document.getElementById('modalEndTime').value = schedule.end || "18:30";
+      document.getElementById('modalMemo').value = schedule.memo || '';
+    } else {
+      isOffCb.checked = false;
+      document.getElementById('modalStartTime').value = "15:30";
+      document.getElementById('modalEndTime').value = "18:30";
+      document.getElementById('modalMemo').value = '';
+    }
+
+    toggleOffInputs();
+    document.getElementById('timeModal').classList.add('open');
+  }
+
+  function closeModal() {
+    document.getElementById('timeModal').classList.remove('open');
+  }
+
+  function saveCurrentSchedule() {
+    const isOff = document.getElementById('modalIsOff').checked;
+    const start = document.getElementById('modalStartTime').value;
+    const end = document.getElementById('modalEndTime').value;
+    const memo = document.getElementById('modalMemo').value.trim();
+
+    if (isOff) {
+      workedSchedules[selectedDateStr] = {
+        start: "",
+        end: "",
+        hours: 0,
+        memo: memo || "휴무",
+        isOff: true
+      };
+    } else {
+      if (!start || !end) {
+        alert('시간을 입력해주세요.');
+        return;
+      }
+
+      const hours = calculateHours(start, end);
+      if (hours <= 0) {
+        alert('종료 시간은 시작 시간보다 이후여야 합니다.');
+        return;
+      }
+
+      workedSchedules[selectedDateStr] = {
+        start,
+        end,
+        hours,
+        memo,
+        isOff: false
+      };
+    }
+
+    closeModal();
+    renderCalendar();
+  }
+
+  function deleteCurrentSchedule() {
+    delete workedSchedules[selectedDateStr];
+    closeModal();
+    renderCalendar();
+  }
+
+  function calculateHours(startStr, endStr) {
+    const [sH, sM] = startStr.split(':').map(Number);
+    const [eH, eM] = endStr.split(':').map(Number);
+    
+    const startMinutes = sH * 60 + sM;
+    const endMinutes = eH * 60 + eM;
+    
+    return Math.max(0, (endMinutes - startMinutes) / 60);
+  }
+
+  function applyDefaultSchedule() {
+    const year = currentDate.getFullYear();
+    const month = currentDate.getMonth();
+    const lastDate = new Date(year, month + 1, 0).getDate();
+
+    for (let date = 1; date <= lastDate; date++) {
+      const d = new Date(year, month, date);
+      const day = d.getDay();
+      if (day === 2 || day === 4 || day === 5) {
+        const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(date).padStart(2, '0')}`;
+        const existingMemo = workedSchedules[dateStr] ? workedSchedules[dateStr].memo : '';
+        workedSchedules[dateStr] = { start: "15:30", end: "18:30", hours: 3.0, memo: existingMemo, isOff: false };
+      }
+    }
+
+    renderCalendar();
+  }
+
+  async function changeMonth(diff) {
+    currentDate.setMonth(currentDate.getMonth() + diff);
+    await renderCalendar();
+  }
+
+  function calculateTotal() {
+    const year = currentDate.getFullYear();
+    const month = String(currentDate.getMonth() + 1).padStart(2, '0');
+    const prefix = `${year}-${month}`;
+
+    let totalHours = 0;
+    let workedDaysCount = 0;
+
+    Object.keys(workedSchedules).forEach(dateStr => {
+      if (dateStr.startsWith(prefix)) {
+        const item = workedSchedules[dateStr];
+        if (!item.isOff) {
+          totalHours += item.hours;
+          workedDaysCount++;
         }
+      }
+    });
 
-        function updateHours(dateStr, val) {
-            const hours = parseFloat(val) || 0;
-            if (!scheduleData[dateStr]) scheduleData[dateStr] = {};
-            scheduleData[dateStr].hours = hours;
-            renderTable();
+    const totalSalary = totalHours * HOURLY_RATE;
+
+    document.getElementById('totalSalary').innerText = `${Math.round(totalSalary).toLocaleString()} 원`;
+    document.getElementById('totalDetail').innerText = `총 ${workedDaysCount}일 (${totalHours.toFixed(1)}시간) 근무`;
+  }
+
+  function loadStateFromUrl() {
+    if (window.location.hash.startsWith('#data=')) {
+      try {
+        const raw = window.location.hash.replace('#data=', '');
+        const decoded = JSON.parse(decodeURIComponent(raw));
+        if (decoded.schedules) workedSchedules = decoded.schedules;
+      } catch (e) {
+        console.error('URL 데이터 불러오기 예외 발생:', e);
+      }
+    }
+  }
+
+  // Firebase Firestore 저장 및 짧은 URL 생성
+  async function saveAndShare() {
+    try {
+      const docRef = await db.collection("schedules").add({
+        year: currentDate.getFullYear(),
+        month: currentDate.getMonth(),
+        schedules: workedSchedules,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+
+      const baseUrl = window.location.href.split('?')[0].split('#')[0];
+      const longUrl = `${baseUrl}?id=${docRef.id}`;
+
+      // TinyURL로 짧은 URL 변환
+      let finalUrl = longUrl;
+      try {
+        const tinyRes = await fetch(`https://tinyurl.com/api-create.php?url=${encodeURIComponent(longUrl)}`);
+        if (tinyRes.ok) {
+          finalUrl = await tinyRes.text();
         }
+      } catch(e) {
+        console.warn("TinyURL 변환 실패, 기본 URL 사용", e);
+      }
 
-        function updateNote(dateStr, val) {
-            if (!scheduleData[dateStr]) scheduleData[dateStr] = {};
-            scheduleData[dateStr].note = val;
-        }
+      navigator.clipboard.writeText(finalUrl).then(() => {
+        alert(`정산 내역이 클라우드에 성공적으로 저장되었습니다!\n\n복사된 짧은 공유 링크:\n${finalUrl}`);
+      });
 
-        function changeMonth(delta) {
-            currentMonth += delta;
-            if (currentMonth < 0) {
-                currentMonth = 11;
-                currentYear--;
-            } else if (currentMonth > 11) {
-                currentMonth = 0;
-                currentYear++;
-            }
-            fetchHolidaysAndRender();
-        }
+    } catch (error) {
+      console.error("Firestore 저장 오류:", error);
+      alert("저장 중 오류가 발생했습니다. 보안 규칙을 확인해 주세요.");
+    }
+  }
 
-        function formatDate(date) {
-            const y = date.getFullYear();
-            const m = String(date.getMonth() + 1).padStart(2, '0');
-            const d = String(date.getDate()).padStart(2, '0');
-            return `${y}-${m}-${d}`;
-        }
+  // Firestore에서 정산 내역 가져오기
+  async function loadFromFirestore(docId) {
+    try {
+      const doc = await db.collection("schedules").doc(docId).get();
+      if (doc.exists) {
+        const data = doc.data();
+        currentDate = new Date(data.year, data.month, 1);
+        workedSchedules = data.schedules || {};
+        await fetchHolidays(currentDate.getFullYear());
+        renderCalendar();
+      } else {
+        alert("존재하지 않거나 삭제된 정산 내역입니다.");
+        renderCalendar();
+      }
+    } catch (error) {
+      console.error("Firestore 불러오기 오류:", error);
+      renderCalendar();
+    }
+  }
 
-        function showToast(msg) {
-            const toast = document.getElementById('toast');
-            toast.innerText = msg;
-            toast.style.display = 'block';
-            setTimeout(() => { toast.style.display = 'none'; }, 2500);
-        }
+  init();
+</script>
 
-        // Firebase Firestore에 저장하고 짧은 링크 생성
-        async function saveAndShare() {
-            showToast("데이터를 저장하는 중입니다...");
-            
-            try {
-                const docRef = await db.collection("schedules").add({
-                    year: currentYear,
-                    month: currentMonth,
-                    data: scheduleData,
-                    updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-                });
-
-                const baseUrl = window.location.href.split('?')[0];
-                const shareUrl = `${baseUrl}?id=${docRef.id}`;
-
-                // TinyURL을 이용한 짧은 링크 변환
-                const tinyRes = await fetch(`https://tinyurl.com/api-create.php?url=${encodeURIComponent(shareUrl)}`);
-                let finalUrl = shareUrl;
-                if (tinyRes.ok) {
-                    finalUrl = await tinyRes.text();
-                }
-
-                // 클립보드 복사
-                navigator.clipboard.writeText(finalUrl).then(() => {
-                    document.getElementById('shareResult').style.display = 'block';
-                    document.getElementById('shareUrl').innerText = finalUrl;
-                    showToast("정산 내역 저장 완료! 공유 링크가 복사되었습니다.");
-                });
-
-            } catch (error) {
-                console.error("Firestore 저장 실패:", error);
-                showToast("저장 중 오류가 발생했습니다.");
-            }
-        }
-
-        // Firebase Firestore에서 가져오기
-        async function loadFromFirestore(docId) {
-            showToast("정산 내역을 불러오는 중...");
-            try {
-                const doc = await db.collection("schedules").doc(docId).get();
-                if (doc.exists) {
-                    const data = doc.data();
-                    currentYear = data.year;
-                    currentMonth = data.month;
-                    scheduleData = data.data;
-                    await fetchHolidaysAndRender();
-                    showToast("최신 정산 내역을 성공적으로 불러왔습니다!");
-                } else {
-                    showToast("존재하지 않는 정산 내역입니다.");
-                    fetchHolidaysAndRender();
-                }
-            } catch (error) {
-                console.error("불러오기 실패:", error);
-                showToast("데이터를 불러오는 중 오류가 발생했습니다.");
-                fetchHolidaysAndRender();
-            }
-        }
-    </script>
 </body>
 </html>
