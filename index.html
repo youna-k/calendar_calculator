@@ -4,11 +4,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>아이돌봄 근무 정산표</title>
-
-  <!-- Firebase SDK (v10) CDN -->
-  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
-
   <style>
     :root {
       --primary-color: #4A90E2;
@@ -296,12 +291,69 @@
     .btn-save { background: var(--primary-color); color: white; }
     .btn-delete { background: var(--danger-color); color: white; }
     .btn-close { background: #E1E8ED; color: #333; }
+
+    /* 저장 상태 표시 */
+    .save-status {
+      text-align: center;
+      font-size: 11px;
+      color: #95A5A6;
+      margin-top: 10px;
+      min-height: 14px;
+    }
+
+    /* 공유받은 정산표 안내 배너 */
+    .shared-banner {
+      background: #FFF8E1;
+      border: 1px solid #FFE082;
+      color: #8D6E00;
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 12px;
+      line-height: 1.6;
+      margin-bottom: 14px;
+    }
+    .shared-banner strong { color: #6D4C00; }
+
+    /* 공유 버튼 */
+    .share-btn:disabled { background: #7F8C8D; cursor: default; }
+    .sub-share-btn {
+      width: 100%;
+      background: transparent;
+      color: #BDC3C7;
+      border: 1px solid #5D6D7E;
+      border-radius: 8px;
+      padding: 9px;
+      font-size: 12px;
+      cursor: pointer;
+      margin-top: 8px;
+    }
+    .sub-share-btn:hover { color: white; border-color: #BDC3C7; }
+
+    /* 공유 링크 표시 박스 */
+    .share-url-box {
+      background: #F4F7FA;
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      padding: 12px;
+      font-size: 13px;
+      color: #2C3E50;
+      word-break: break-all;
+      user-select: all;
+      line-height: 1.5;
+    }
+    .share-hint { font-size: 12px; color: #7F8C8D; line-height: 1.7; margin-top: 10px; }
   </style>
 </head>
 <body>
 
 <div class="container">
   <h1>👶 아이돌봄 근무 정산표</h1>
+
+  <!-- 공유받은 정산표를 열었을 때만 표시 -->
+  <div class="shared-banner" id="sharedBanner" style="display: none;">
+    👀 <strong>공유받은 정산표를 보고 있습니다.</strong><br>
+    내용을 고친 뒤 아래 [링크 만들기]를 누르면 내 정산표로 새 링크가 만들어집니다.
+  </div>
 
   <!-- 1. 캘린더 -->
   <div class="card">
@@ -338,11 +390,14 @@
 
   <!-- 3. 총 합계 & 공유 -->
   <div class="summary-card">
+    <!-- 요청사항 1: 응원 메시지 추가 -->
     <div class="cheering-message">👏 이번 달도 수고 많으셨습니다!</div>
     <div class="summary-title">이번 달 예상 지급액</div>
     <div class="summary-value" id="totalSalary">0 원</div>
     <div class="summary-detail" id="totalDetail">총 0일 (0시간) 근무</div>
-    <button class="share-btn" onclick="saveAndShare()">🔗 정산 내역 클라우드 저장 및 짧은 링크 복사</button>
+    <button class="share-btn" id="cloudShareBtn" onclick="shareToCloud()">🔗 링크 만들기</button>
+    <button class="sub-share-btn" onclick="copyLongUrl()">인터넷 저장 없이 긴 주소로 복사</button>
+    <div class="save-status" id="saveStatus"></div>
   </div>
 </div>
 
@@ -380,8 +435,28 @@
   </div>
 </div>
 
-<script>
-  // Firebase 초기화
+<!-- 5. 공유 링크 결과 모달 -->
+<div class="modal-overlay" id="shareModal">
+  <div class="modal-content">
+    <div class="modal-title">🔗 공유 링크가 준비됐습니다</div>
+    <div class="share-url-box" id="shareUrlText"></div>
+    <div class="share-hint">
+      링크를 받은 분은 이 달의 근무 내역과 예상 지급액을 그대로 볼 수 있습니다.<br>
+      내용을 수정한 뒤 다시 저장하면 <strong>같은 링크</strong>에 최신 내용이 반영됩니다.
+    </div>
+    <div class="modal-buttons">
+      <button class="btn-close" onclick="closeShareModal()">닫기</button>
+      <button class="btn-save" onclick="copyShareLink()">링크 복사</button>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+  // ───────── Firebase 연결 ─────────
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js";
+  import { getFirestore, doc, getDoc, setDoc, serverTimestamp }
+    from "https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js";
+
   const firebaseConfig = {
     apiKey: "AIzaSyBUN_PpnUljxekaQuuuw48bDs9N1ZKrgJw",
     authDomain: "youna-k.firebaseapp.com",
@@ -391,39 +466,54 @@
     appId: "1:685048156796:web:6352ff5c96363aea69eff9"
   };
 
-  firebase.initializeApp(firebaseConfig);
-  const db = firebase.firestore();
+  const app = initializeApp(firebaseConfig);
+  const db = getFirestore(app);
+  const COLLECTION = "sheets";
+
+  const LS_DATA = "childcare_sheet_v1";
+  const LS_OWNED = "childcare_owned_ids_v1";
+  const ID_CHARS = "23456789abcdefghjkmnpqrstuvwxyz";
+  const ID_LENGTH = 8;
 
   const HOURLY_RATE = 17000;
 
   let currentDate = new Date();
   let workedSchedules = {};
   let selectedDateStr = null;
-  let holidaysMap = {};
+  let holidaysMap = {}; // 공휴일 정보 캐싱 { "YYYY-MM-DD": "공휴일명" }
 
   let isDeleteMode = false;
   let datesToDelete = new Set();
 
+  let currentSheetId = null;  // 지금 보고 있는 클라우드 문서 ID
+  let isOwner = false;        // 내가 만든 정산표인지 여부
+
   const dayNames = ['일', '월', '화', '수', '목', '금', '토'];
 
   async function init() {
-    // 1. URL ID 기반 Firestore 데이터 로드 시도
-    const urlParams = new URLSearchParams(window.location.search);
-    const docId = urlParams.get('id');
+    await loadInitialData();
+    await fetchHolidays(currentDate.getFullYear());
+    renderCalendar();
+  }
 
-    if (docId) {
-      await loadFromFirestore(docId);
-    } else {
-      // 구 버전 하위 호환성 (Hash Data)
-      loadStateFromUrl();
-      await fetchHolidays(currentDate.getFullYear());
-      renderCalendar();
+  // 주소 → 클라우드 → 내 기기 순서로 데이터를 찾아 불러옵니다.
+  async function loadInitialData() {
+    const hash = window.location.hash;
+
+    if (hash.startsWith('#s=')) {
+      await loadFromCloud(hash.slice(3));
+      return;
     }
+    if (hash.startsWith('#data=')) {
+      loadStateFromUrl();
+      return;
+    }
+    loadLocal();
   }
 
   // 한국 공휴일 API 가져오기 (Nager.Date Public API 연동)
   async function fetchHolidays(year) {
-    if (holidaysMap[year]) return;
+    if (holidaysMap[year]) return; // 이미 연도별 공휴일을 불러온 경우 생략
     try {
       const response = await fetch(`https://date.nager.at/api/v3/PublicHolidays/${year}/KR`);
       if (response.ok) {
@@ -433,7 +523,8 @@
         });
       }
     } catch (e) {
-      console.warn('공휴일 정보 가져오기 실패, 기본 백업 활용', e);
+      console.warn('공휴일 정보를 가져오는데 실패했습니다. 기본 백업 데이터를 활용합니다.', e);
+      // 백업용 주요 고정 공휴일 데이터
       const fallback = {
         [`${year}-01-01`]: '신정',
         [`${year}-03-01`]: '삼일절',
@@ -452,6 +543,7 @@
     const year = currentDate.getFullYear();
     const month = currentDate.getMonth();
 
+    // 연도 변경 시 해당 연도 공휴일 추가 로드
     await fetchHolidays(year);
 
     document.getElementById('currentMonthTitle').innerText = `${year}년 ${month + 1}월`;
@@ -459,6 +551,7 @@
     const calendarGrid = document.getElementById('calendarGrid');
     calendarGrid.innerHTML = '';
 
+    // 요일 헤더
     dayNames.forEach((name, idx) => {
       const dayHeader = document.createElement('div');
       dayHeader.className = `day-name ${idx === 0 ? 'sun' : idx === 6 ? 'sat' : ''}`;
@@ -469,12 +562,14 @@
     const firstDay = new Date(year, month, 1).getDay();
     const lastDate = new Date(year, month + 1, 0).getDate();
 
+    // 시작 공백
     for (let i = 0; i < firstDay; i++) {
       const emptyCell = document.createElement('div');
       emptyCell.className = 'day-cell empty';
       calendarGrid.appendChild(emptyCell);
     }
 
+    // 날짜 셀 생성
     for (let date = 1; date <= lastDate; date++) {
       const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(date).padStart(2, '0')}`;
       const dayOfWeek = new Date(year, month, date).getDay();
@@ -482,6 +577,7 @@
       const cell = document.createElement('div');
       cell.className = 'day-cell';
 
+      // 주말 및 공휴일 구분
       const holidayName = holidaysMap[dateStr];
       if (holidayName) cell.classList.add('is-holiday');
       if (dayOfWeek === 0) cell.classList.add('is-sun');
@@ -597,6 +693,7 @@
       });
       datesToDelete.clear();
       toggleDeleteMode();
+      saveLocal();
     }
   }
 
@@ -669,12 +766,14 @@
 
     closeModal();
     renderCalendar();
+    saveLocal();
   }
 
   function deleteCurrentSchedule() {
     delete workedSchedules[selectedDateStr];
     closeModal();
     renderCalendar();
+    saveLocal();
   }
 
   function calculateHours(startStr, endStr) {
@@ -703,11 +802,13 @@
     }
 
     renderCalendar();
+    saveLocal();
   }
 
   async function changeMonth(diff) {
     currentDate.setMonth(currentDate.getMonth() + diff);
     await renderCalendar();
+    saveLocal();
   }
 
   function calculateTotal() {
@@ -734,71 +835,258 @@
     document.getElementById('totalDetail').innerText = `총 ${workedDaysCount}일 (${totalHours.toFixed(1)}시간) 근무`;
   }
 
-  function loadStateFromUrl() {
-    if (window.location.hash.startsWith('#data=')) {
-      try {
-        const raw = window.location.hash.replace('#data=', '');
-        const decoded = JSON.parse(decodeURIComponent(raw));
-        if (decoded.schedules) workedSchedules = decoded.schedules;
-      } catch (e) {
-        console.error('URL 데이터 불러오기 예외 발생:', e);
-      }
-    }
+  /* ============================================================
+     저장 상태 표시
+     ============================================================ */
+  function setStatus(msg) {
+    const el = document.getElementById('saveStatus');
+    if (el) el.innerText = msg;
   }
 
-  // Firebase Firestore 저장 및 짧은 URL 생성
-  async function saveAndShare() {
+  function nowLabel() {
+    const d = new Date();
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  }
+
+  function monthKey() {
+    return `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}`;
+  }
+
+  /* ============================================================
+     내 기기 저장 (localStorage) — 새로고침해도 내용이 남습니다.
+     ============================================================ */
+  function saveLocal() {
     try {
-      const docRef = await db.collection("schedules").add({
-        year: currentDate.getFullYear(),
-        month: currentDate.getMonth(),
+      localStorage.setItem(LS_DATA, JSON.stringify({
         schedules: workedSchedules,
-        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-      });
-
-      const baseUrl = window.location.href.split('?')[0].split('#')[0];
-      const longUrl = `${baseUrl}?id=${docRef.id}`;
-
-      // TinyURL로 짧은 URL 변환
-      let finalUrl = longUrl;
-      try {
-        const tinyRes = await fetch(`https://tinyurl.com/api-create.php?url=${encodeURIComponent(longUrl)}`);
-        if (tinyRes.ok) {
-          finalUrl = await tinyRes.text();
-        }
-      } catch(e) {
-        console.warn("TinyURL 변환 실패, 기본 URL 사용", e);
-      }
-
-      navigator.clipboard.writeText(finalUrl).then(() => {
-        alert(`정산 내역이 클라우드에 성공적으로 저장되었습니다!\n\n복사된 짧은 공유 링크:\n${finalUrl}`);
-      });
-
-    } catch (error) {
-      console.error("Firestore 저장 오류:", error);
-      alert("저장 중 오류가 발생했습니다. 보안 규칙을 확인해 주세요.");
+        month: monthKey(),
+        sheetId: currentSheetId,
+        savedAt: new Date().toISOString()
+      }));
+      setStatus(currentSheetId
+        ? `내 기기에 저장됨 (${nowLabel()}) · 링크 갱신은 [링크 만들기]를 눌러주세요`
+        : `내 기기에 저장됨 (${nowLabel()})`);
+    } catch (e) {
+      setStatus('이 브라우저에서는 자동 저장이 지원되지 않습니다');
     }
   }
 
-  // Firestore에서 정산 내역 가져오기
-  async function loadFromFirestore(docId) {
+  function loadLocal() {
     try {
-      const doc = await db.collection("schedules").doc(docId).get();
-      if (doc.exists) {
-        const data = doc.data();
-        currentDate = new Date(data.year, data.month, 1);
-        workedSchedules = data.schedules || {};
-        await fetchHolidays(currentDate.getFullYear());
-        renderCalendar();
-      } else {
-        alert("존재하지 않거나 삭제된 정산 내역입니다.");
-        renderCalendar();
+      const raw = localStorage.getItem(LS_DATA);
+      if (!raw) return;
+      const saved = JSON.parse(raw);
+      if (saved.schedules) workedSchedules = saved.schedules;
+      if (saved.month) applyMonth(saved.month);
+      if (saved.sheetId) {
+        currentSheetId = saved.sheetId;
+        isOwner = getOwnedIds().includes(saved.sheetId);
       }
-    } catch (error) {
-      console.error("Firestore 불러오기 오류:", error);
-      renderCalendar();
+      setStatus('내 기기에 저장된 내용을 불러왔습니다');
+    } catch (e) {
+      console.warn('내 기기 저장분을 불러오지 못했습니다.', e);
     }
   }
+
+  function applyMonth(monthStr) {
+    const [y, m] = monthStr.split('-').map(Number);
+    if (y && m) currentDate = new Date(y, m - 1, 1);
+  }
+
+  /* ============================================================
+     내가 만든 정산표 ID 기억하기
+     ============================================================ */
+  function getOwnedIds() {
+    try {
+      return JSON.parse(localStorage.getItem(LS_OWNED) || '[]');
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function rememberOwnedId(id) {
+    try {
+      const ids = getOwnedIds();
+      if (!ids.includes(id)) {
+        ids.push(id);
+        localStorage.setItem(LS_OWNED, JSON.stringify(ids));
+      }
+    } catch (e) { /* 무시 */ }
+  }
+
+  /* ============================================================
+     클라우드 저장 (Firestore) + 짧은 링크
+     ============================================================ */
+  function randomId(len) {
+    let out = '';
+    const bytes = new Uint8Array(len);
+    crypto.getRandomValues(bytes);
+    for (let i = 0; i < len; i++) out += ID_CHARS[bytes[i] % ID_CHARS.length];
+    return out;
+  }
+
+  // 혹시 겹치는 ID가 나오면 다시 뽑습니다.
+  async function createNewId() {
+    for (let i = 0; i < 5; i++) {
+      const id = randomId(ID_LENGTH);
+      const snap = await getDoc(doc(db, COLLECTION, id));
+      if (!snap.exists()) return id;
+    }
+    return randomId(ID_LENGTH + 4);
+  }
+
+  async function shareToCloud() {
+    const btn = document.getElementById('cloudShareBtn');
+    const originalLabel = btn.innerText;
+    btn.disabled = true;
+    btn.innerText = '저장 중...';
+    setStatus('클라우드에 저장하는 중입니다...');
+
+    try {
+      const id = (currentSheetId && isOwner) ? currentSheetId : await createNewId();
+
+      await setDoc(doc(db, COLLECTION, id), {
+        schedules: workedSchedules,
+        month: monthKey(),
+        hourlyRate: HOURLY_RATE,
+        updatedAt: serverTimestamp()
+      });
+
+      currentSheetId = id;
+      isOwner = true;
+      rememberOwnedId(id);
+      saveLocal();
+
+      window.history.replaceState(null, '', `#s=${id}`);
+      document.getElementById('sharedBanner').style.display = 'none';
+
+      openShareModal(window.location.href);
+      setStatus(`클라우드 저장 완료 (${nowLabel()})`);
+    } catch (e) {
+      console.error(e);
+      setStatus('클라우드 저장에 실패했습니다');
+      alert('클라우드 저장에 실패했습니다.\n\n오류: ' + (e.code || e.message) +
+            '\n\nFirebase 콘솔에서 Firestore 데이터베이스를 만들었는지, 보안 규칙이 쓰기를 허용하는지 확인해 주세요.');
+    } finally {
+      btn.disabled = false;
+      btn.innerText = originalLabel;
+    }
+  }
+
+  async function loadFromCloud(id) {
+    setStatus('공유된 정산표를 불러오는 중입니다...');
+    try {
+      const snap = await getDoc(doc(db, COLLECTION, id));
+
+      if (!snap.exists()) {
+        alert('이 링크에 해당하는 정산표를 찾을 수 없습니다.\n링크가 정확한지 확인해 주세요.');
+        setStatus('정산표를 찾지 못했습니다');
+        loadLocal();
+        return;
+      }
+
+      const data = snap.data();
+      workedSchedules = data.schedules || {};
+      if (data.month) applyMonth(data.month);
+
+      currentSheetId = id;
+      isOwner = getOwnedIds().includes(id);
+
+      if (!isOwner) {
+        document.getElementById('sharedBanner').style.display = 'block';
+        setStatus('공유된 정산표를 불러왔습니다');
+      } else {
+        setStatus('내 정산표를 클라우드에서 불러왔습니다');
+      }
+    } catch (e) {
+      console.error(e);
+      alert('정산표를 불러오지 못했습니다.\n\n오류: ' + (e.code || e.message));
+      setStatus('불러오기에 실패했습니다');
+      loadLocal();
+    }
+  }
+
+  /* ============================================================
+     링크 복사
+     ============================================================ */
+  async function copyText(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch (e) {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        const ok = document.execCommand('copy');
+        ta.remove();
+        return ok;
+      } catch (e2) {
+        return false;
+      }
+    }
+  }
+
+  function openShareModal(url) {
+    document.getElementById('shareUrlText').innerText = url;
+    document.getElementById('shareModal').classList.add('open');
+  }
+
+  function closeShareModal() {
+    document.getElementById('shareModal').classList.remove('open');
+  }
+
+  async function copyShareLink() {
+    const url = document.getElementById('shareUrlText').innerText;
+    const ok = await copyText(url);
+    alert(ok
+      ? '링크가 복사되었습니다!\n시터님께 메시지로 전달해 보세요.'
+      : '복사에 실패했습니다. 위 주소를 길게 눌러 직접 복사해 주세요.');
+  }
+
+  // 인터넷 저장 없이, 내용을 주소 안에 그대로 담아 복사합니다.
+  async function copyLongUrl() {
+    const encoded = encodeURIComponent(JSON.stringify({ schedules: workedSchedules }));
+    const base = window.location.href.split('#')[0];
+    const ok = await copyText(`${base}#data=${encoded}`);
+    alert(ok
+      ? '긴 주소가 복사되었습니다.\n내용이 주소 안에 들어 있어 클라우드 없이도 열립니다.'
+      : '복사에 실패했습니다.');
+  }
+
+  // 예전에 만든 긴 주소 링크도 그대로 열립니다.
+  function loadStateFromUrl() {
+    try {
+      const raw = window.location.hash.replace('#data=', '');
+      const decoded = JSON.parse(decodeURIComponent(raw));
+      if (decoded.schedules) workedSchedules = decoded.schedules;
+      setStatus('주소에 담긴 내용을 불러왔습니다');
+    } catch (e) {
+      console.error('주소의 데이터를 불러오는 중 오류가 발생했습니다:', e);
+      loadLocal();
+    }
+  }
+
+  /* ============================================================
+     HTML의 onclick에서 부를 수 있도록 연결
+     ============================================================ */
+  Object.assign(window, {
+    changeMonth,
+    applyDefaultSchedule,
+    toggleDeleteMode,
+    executeBatchDelete,
+    toggleOffInputs,
+    closeModal,
+    saveCurrentSchedule,
+    deleteCurrentSchedule,
+    shareToCloud,
+    copyLongUrl,
+    copyShareLink,
+    closeShareModal
+  });
 
   init();
 </script>
