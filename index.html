@@ -498,10 +498,16 @@
 
   // 주소 → 클라우드 → 내 기기 순서로 데이터를 찾아 불러옵니다.
   async function loadInitialData() {
-    const hash = window.location.hash;
+    // ?id=xxxx (단축 URL에서도 안전하게 전달되는 방식)
+    const queryId = new URLSearchParams(window.location.search).get('id');
+    if (queryId) {
+      await loadFromCloud(queryId.trim());
+      return;
+    }
 
+    const hash = window.location.hash;
     if (hash.startsWith('#s=')) {
-      await loadFromCloud(hash.slice(3));
+      await loadFromCloud(hash.slice(3).trim());
       return;
     }
     if (hash.startsWith('#data=')) {
@@ -509,6 +515,11 @@
       return;
     }
     loadLocal();
+  }
+
+  // 주소에서 물음표·샵을 떼어낸 기본 주소
+  function baseUrl() {
+    return window.location.href.split('#')[0].split('?')[0];
   }
 
   // 한국 공휴일 API 가져오기 (Nager.Date Public API 연동)
@@ -957,10 +968,11 @@
       rememberOwnedId(id);
       saveLocal();
 
-      window.history.replaceState(null, '', `#s=${id}`);
+      const shareUrl = `${baseUrl()}?id=${id}`;
+      window.history.replaceState(null, '', shareUrl);
       document.getElementById('sharedBanner').style.display = 'none';
 
-      openShareModal(window.location.href);
+      openShareModal(shareUrl);
       setStatus(`클라우드 저장 완료 (${nowLabel()})`);
     } catch (e) {
       console.error(e);
@@ -979,7 +991,8 @@
       const snap = await getDoc(doc(db, COLLECTION, id));
 
       if (!snap.exists()) {
-        alert('이 링크에 해당하는 정산표를 찾을 수 없습니다.\n링크가 정확한지 확인해 주세요.');
+        alert('이 링크에 해당하는 정산표를 찾을 수 없습니다.\n\n찾은 ID: ' + id +
+              '\n\n예전 버전에서 만든 링크는 열리지 않습니다. 링크를 다시 만들어 주세요.');
         setStatus('정산표를 찾지 못했습니다');
         loadLocal();
         return;
@@ -1050,8 +1063,7 @@
   // 인터넷 저장 없이, 내용을 주소 안에 그대로 담아 복사합니다.
   async function copyLongUrl() {
     const encoded = encodeURIComponent(JSON.stringify({ schedules: workedSchedules }));
-    const base = window.location.href.split('#')[0];
-    const ok = await copyText(`${base}#data=${encoded}`);
+    const ok = await copyText(`${baseUrl()}#data=${encoded}`);
     alert(ok
       ? '긴 주소가 복사되었습니다.\n내용이 주소 안에 들어 있어 클라우드 없이도 열립니다.'
       : '복사에 실패했습니다.');
